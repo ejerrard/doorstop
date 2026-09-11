@@ -111,23 +111,3 @@ def parse_navtree(soup: BeautifulSoup) -> list[MinisterRecord]:
 
 def scrape_all() -> list[MinisterRecord]:
     return parse_navtree(fetch_soup())
-
-
-def main() -> None:
-    from pathlib import Path
-
-    from doorstop.load import load_duckdb, write_csv
-
-    csv_path = Path("data/processed/ref_ministers.csv")
-    db_path = Path("data/doorstop.duckdb")
-
-    records = scrape_all()
-    if not records:
-        raise SystemExit("no minister records scraped from cabinet.qld.gov.au")
-    write_csv(records, csv_path)
-    load_duckdb(csv_path, db_path, table_name="ref_ministers")
-    print(f"{len(records)} minister records -> {csv_path} and {db_path} (ref_ministers)")
-
-
-if __name__ == "__main__":
-    main()
