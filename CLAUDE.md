@@ -10,12 +10,20 @@ Doorstop extracts Queensland ministerial diaries (published as FOI PDFs) into st
 
 Uses `uv` with a `.venv` already present (Python 3.13, per `.python-version`).
 
+The CLI is built with [Typer](https://typer.tiangolo.com/) (`doorstop/cli.py`, `app = typer.Typer()`), exposed via `doorstop/__main__.py` so it runs as `python -m doorstop`, and also installable as a `doorstop` script via the `[project.scripts]` entry in `pyproject.toml`.
+
 ```bash
 # Run the full pipeline: PDFs in a directory -> CSV -> DuckDB table
-python -m doorstop.cli [input_dir]   # defaults to data/samples
+python -m doorstop extract [input_dir]   # defaults to data/samples
+
+# Scrape the QLD Cabinet minister/portfolio directory into a reference table
+python -m doorstop scrape-refs
+
+# See all commands/options
+python -m doorstop --help
 ```
 
-`doorstop.cli` glob-matches `*.pdf` in the input directory, extracts every entry from each, writes `data/processed/raw_diary_entries.csv`, and loads that CSV into `data/doorstop.duckdb` (table `raw_diary_entries`) via DuckDB's `read_csv_auto`.
+`extract` glob-matches `*.pdf` in the input directory, extracts every entry from each, writes `data/processed/raw_diary_entries.csv` (override with `--csv-path`), and loads that CSV into `data/doorstop.duckdb` (table `raw_diary_entries`, override with `--db-path`) via DuckDB's `read_csv_auto`.
 
 There is no test suite, linter, or formatter configured yet.
 
@@ -33,6 +41,8 @@ Two-stage pipeline, each stage in its own module under `doorstop/`:
 
 - **`load.py`** — persists the raw entries as `data/processed/raw_diary_entries.csv` (one row per meeting, untouched from extraction) and loads that same CSV into DuckDB. The CSV is treated as the raw source layer; DuckDB just makes it SQL-queryable. This is intended to eventually be the source database for a dbt-duckdb project — keep the CSV/DuckDB raw layer unmodified by downstream logic rather than mutating it in place.
 
-- **`cli.py`** — thin entry point wiring `extract.py` -> `load.py` for a directory of PDFs.
+- **`ministers.py`** — scrapes cabinet.qld.gov.au's minister/portfolio directory into a `MinisterRecord` reference table (name, term, role, and the page URL listing that minister's diary PDFs). Portfolio titles aren't published there — they only exist inside each diary PDF's title block, which `extract.py` already parses — so this is purely a name/URL reference, and `page_url` is also the seed a future task would need to bulk-download diary PDFs per minister.
+
+- **`cli.py`** — Typer app wiring the two pipelines together: `extract` (`extract.py` -> `load.py` for a directory of PDFs) and `scrape-refs` (`ministers.py` -> `load.py`).
 
 Sample source PDFs live in `data/samples/`, named `<portfolio>_<year>-<month>.pdf`.
