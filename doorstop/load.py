@@ -18,7 +18,7 @@ silently erased.
 from __future__ import annotations
 
 import csv
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -87,15 +87,17 @@ def merge_ministerial_diaries(pdf_urls: list[str], db_path: Path, table_name: st
     both brand-new URLs and URLs reappearing after a gap, so a disappearance
     is never silently erased by reviving the same row."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    today = date.today()
+    # Stored as naive UTC (not TIMESTAMPTZ) so values are unambiguous regardless of the
+    # machine's local timezone, without pulling in DuckDB's timezone-conversion behaviour.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     found = list(set(pdf_urls))
     with duckdb.connect(str(db_path)) as con:
         con.execute(
             f"""
             CREATE TABLE IF NOT EXISTS "{table_name}" (
                 pdf_url VARCHAR,
-                first_seen DATE,
-                last_seen DATE,
+                first_seen TIMESTAMP,
+                last_seen TIMESTAMP,
                 still_listed BOOLEAN
             )
             """
@@ -108,7 +110,7 @@ def merge_ministerial_diaries(pdf_urls: list[str], db_path: Path, table_name: st
             SET last_seen = ?
             WHERE still_listed AND pdf_url IN (SELECT pdf_url FROM _found_diary_urls)
             """,
-            [today],
+            [now],
         )
 
         con.execute(
@@ -126,5 +128,5 @@ def merge_ministerial_diaries(pdf_urls: list[str], db_path: Path, table_name: st
             FROM _found_diary_urls
             WHERE pdf_url NOT IN (SELECT pdf_url FROM "{table_name}" WHERE still_listed)
             """,
-            [today, today],
+            [now, now],
         )
