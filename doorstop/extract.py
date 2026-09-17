@@ -73,8 +73,12 @@ def _find_header_bounds(page0) -> tuple[float, float, float]:
                 line[idx_name:idx_purpose],
                 line[idx_purpose:],
             )
-            b1 = (max(w["x1"] for w in date_group) + min(w["x0"] for w in name_group)) / 2
-            b2 = (max(w["x1"] for w in name_group) + min(w["x0"] for w in purpose_group)) / 2
+            b1 = (
+                max(w["x1"] for w in date_group) + min(w["x0"] for w in name_group)
+            ) / 2
+            b2 = (
+                max(w["x1"] for w in name_group) + min(w["x0"] for w in purpose_group)
+            ) / 2
             return line[0]["top"], b1, b2
     raise ValueError("could not find table header row")
 
@@ -82,7 +86,13 @@ def _find_header_bounds(page0) -> tuple[float, float, float]:
 def _bucket_line(line: list[dict], b1: float, b2: float) -> tuple[str, str, str]:
     date_words, name_words, purpose_words = [], [], []
     for w in line:
-        bucket = date_words if w["x0"] < b1 else name_words if w["x0"] < b2 else purpose_words
+        bucket = (
+            date_words
+            if w["x0"] < b1
+            else name_words
+            if w["x0"] < b2
+            else purpose_words
+        )
         bucket.append(w)
     join = lambda ws: " ".join(w["text"] for w in ws).strip()
     return join(date_words), join(name_words), join(purpose_words)

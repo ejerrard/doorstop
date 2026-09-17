@@ -1,7 +1,7 @@
 """Entry points for the doorstop pipelines.
 
-    python -m doorstop extract [input_dir]
-    python -m doorstop discover-ministerial-diaries
+python -m doorstop extract [input_dir]
+python -m doorstop discover-ministerial-diaries
 """
 
 from __future__ import annotations
@@ -10,9 +10,15 @@ from pathlib import Path
 
 import typer
 
-from doorstop.extract import extract_pdf
 from doorstop.cabinet import discover_ministerial_diaries
-from doorstop.load import RAW_TABLE_NAME, diary_diff, load_duckdb, merge_ministerial_diaries, write_csv
+from doorstop.extract import extract_pdf
+from doorstop.load import (
+    RAW_TABLE_NAME,
+    diary_diff,
+    load_duckdb,
+    merge_ministerial_diaries,
+    write_csv,
+)
 
 DEFAULT_INPUT_DIR = Path("data/samples")
 CSV_PATH = Path("data/processed/raw_diary_entries.csv")
@@ -24,7 +30,9 @@ app = typer.Typer()
 
 @app.command()
 def extract(
-    input_dir: Path = typer.Argument(DEFAULT_INPUT_DIR, help="Directory of diary PDFs to extract."),
+    input_dir: Path = typer.Argument(
+        DEFAULT_INPUT_DIR, help="Directory of diary PDFs to extract."
+    ),
     csv_path: Path = typer.Option(CSV_PATH, help="Where to write the raw entries CSV."),
     db_path: Path = typer.Option(DB_PATH, help="DuckDB database to load the CSV into."),
 ) -> None:
@@ -41,12 +49,16 @@ def extract(
 
     write_csv(entries, csv_path)
     load_duckdb(csv_path, db_path)
-    print(f"\n{len(entries)} total entries -> {csv_path} and {db_path} ({RAW_TABLE_NAME})")
+    print(
+        f"\n{len(entries)} total entries -> {csv_path} and {db_path} ({RAW_TABLE_NAME})"
+    )
 
 
 @app.command("discover-ministerial-diaries")
 def discover_ministerial_diaries_cmd(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Crawl and print a summary; write nothing."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Crawl and print a summary; write nothing."
+    ),
     db_path: Path = typer.Option(DB_PATH, help="DuckDB database to merge into."),
 ) -> None:
     """Discover every reachable diary PDF link and reconcile it into ref_ministerial_diaries."""
@@ -61,8 +73,12 @@ def discover_ministerial_diaries_cmd(
         print(f"  {summary}")
         return
 
-    merge_ministerial_diaries(pdf_urls, db_path, table_name=MINISTERIAL_DIARIES_TABLE_NAME)
-    print(f"{len(pdf_urls)} diary PDF URLs -> {db_path} ({MINISTERIAL_DIARIES_TABLE_NAME})")
+    merge_ministerial_diaries(
+        pdf_urls, db_path, table_name=MINISTERIAL_DIARIES_TABLE_NAME
+    )
+    print(
+        f"{len(pdf_urls)} diary PDF URLs -> {db_path} ({MINISTERIAL_DIARIES_TABLE_NAME})"
+    )
     print(f"  {summary}")
 
 

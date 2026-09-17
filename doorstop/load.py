@@ -37,7 +37,9 @@ def write_csv(entries: list[DiaryEntry], path: Path) -> None:
             writer.writerow(entry.to_dict())
 
 
-def load_duckdb(csv_path: Path, db_path: Path, table_name: str = RAW_TABLE_NAME) -> None:
+def load_duckdb(
+    csv_path: Path, db_path: Path, table_name: str = RAW_TABLE_NAME
+) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with duckdb.connect(str(db_path)) as con:
         con.execute(
@@ -46,7 +48,9 @@ def load_duckdb(csv_path: Path, db_path: Path, table_name: str = RAW_TABLE_NAME)
         )
 
 
-def _existing_diary_urls(con: duckdb.DuckDBPyConnection, table_name: str) -> tuple[set[str], set[str]]:
+def _existing_diary_urls(
+    con: duckdb.DuckDBPyConnection, table_name: str
+) -> tuple[set[str], set[str]]:
     """Returns (previously_open, previously_seen) pdf_url sets from
     table_name, or two empty sets if the table doesn't exist yet (first
     run)."""
@@ -56,9 +60,17 @@ def _existing_diary_urls(con: duckdb.DuckDBPyConnection, table_name: str) -> tup
     if exists is None:
         return set(), set()
     previously_open = {
-        row[0] for row in con.execute(f'SELECT pdf_url FROM "{table_name}" WHERE still_listed').fetchall()
+        row[0]
+        for row in con.execute(
+            f'SELECT pdf_url FROM "{table_name}" WHERE still_listed'
+        ).fetchall()
     }
-    previously_seen = {row[0] for row in con.execute(f'SELECT DISTINCT pdf_url FROM "{table_name}"').fetchall()}
+    previously_seen = {
+        row[0]
+        for row in con.execute(
+            f'SELECT DISTINCT pdf_url FROM "{table_name}"'
+        ).fetchall()
+    }
     return previously_open, previously_seen
 
 
@@ -79,7 +91,9 @@ def diary_diff(pdf_urls: list[str], db_path: Path, table_name: str) -> dict[str,
     }
 
 
-def merge_ministerial_diaries(pdf_urls: list[str], db_path: Path, table_name: str) -> None:
+def merge_ministerial_diaries(
+    pdf_urls: list[str], db_path: Path, table_name: str
+) -> None:
     """Type 2 slowly-changing merge of freshly discovered diary PDF URLs
     into `table_name`: extends already-open rows found again, closes open
     rows not found this run (`still_listed = false`, never deleted), and
@@ -102,7 +116,10 @@ def merge_ministerial_diaries(pdf_urls: list[str], db_path: Path, table_name: st
             )
             """
         )
-        con.execute("CREATE OR REPLACE TEMP TABLE _found_diary_urls AS SELECT UNNEST(?) AS pdf_url", [found])
+        con.execute(
+            "CREATE OR REPLACE TEMP TABLE _found_diary_urls AS SELECT UNNEST(?) AS pdf_url",
+            [found],
+        )
 
         con.execute(
             f"""
