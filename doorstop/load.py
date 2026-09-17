@@ -18,7 +18,7 @@ silently erased.
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
@@ -89,7 +89,7 @@ def merge_ministerial_diaries(pdf_urls: list[str], db_path: Path, table_name: st
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # Stored as naive UTC (not TIMESTAMPTZ) so values are unambiguous regardless of the
     # machine's local timezone, without pulling in DuckDB's timezone-conversion behaviour.
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     found = list(set(pdf_urls))
     with duckdb.connect(str(db_path)) as con:
         con.execute(
