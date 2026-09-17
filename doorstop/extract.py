@@ -95,11 +95,14 @@ def _extract_header_metadata(page0, header_top: float) -> dict:
     # First line is the "Ministerial Diary" title; a lone "1" is the
     # footnote marker rendered as its own line in some diaries.
     body = [t for t in texts[1:] if t.strip() != "1"]
-    range_idx = next(i for i, t in enumerate(body) if RANGE_RE.search(t))
-    match = RANGE_RE.search(body[range_idx])
+
+    range_idx, match = next(
+        (i, m) for i, t in enumerate(body) if (m := RANGE_RE.search(t))
+    )
+
     return {
         "minister_name": body[range_idx - 1].replace("The Hon ", "").strip(),
-        "portfolio": "; ".join(body[:range_idx - 1]),
+        "portfolio": "; ".join(body[: range_idx - 1]),
         "period_start_raw": match.group(1),
         "period_end_raw": match.group(2),
     }
