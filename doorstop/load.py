@@ -13,6 +13,12 @@ upsert against a small, durable table that tracks reachability over time
 snapshot - closing a row on disappearance and opening a *new* row on
 reappearance rather than reviving the old one, so a gap in listing is never
 silently erased.
+
+`merge_pdf_snapshots` follows the same Type 2 shape one level deeper: instead
+of tracking whether a URL is still listed, it tracks whether a URL's served
+content has ever changed, keyed on (pdf_url, content_hash) rather than just
+pdf_url - a URL with more than one row has, by construction, served different
+bytes at different times.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from pathlib import Path
 
 import duckdb
 
+from doorstop.download import PdfDownload
 from doorstop.extract import DiaryEntry
 
 RAW_TABLE_NAME = "raw_diary_entries"
@@ -144,6 +151,151 @@ def merge_ministerial_diaries(
             SELECT pdf_url, ?, ?, true
             FROM _found_diary_urls
             WHERE pdf_url NOT IN (SELECT pdf_url FROM "{table_name}" WHERE still_listed)
+            """,
+            [now, now],
+        )
+
+
+def still_listed_diary_urls(db_path: Path, table_name: str) -> list[str]:
+    """Reads pdf_url for every still_listed row in table_name - the input
+    source for the download stage, taken from the persisted
+    ref_ministerial_diaries table rather than a fresh crawl so a delisted URL
+    (known dead) isn't retried, and a URL reappearing after a gap (which
+    discovery reopens as a new still_listed row) is picked up automatically
+    on this stage's next run."""
+    with duckdb.connect(str(db_path)) as con:
+        exists = con.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = ?", [table_name]
+        ).fetchone()
+        if exists is None:
+            return []
+        rows = con.execute(
+            f'SELECT pdf_url FROM "{table_name}" WHERE still_listed'
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def _existing_pdf_hashes(
+    con: duckdb.DuckDBPyConnection, table_name: str
+) -> dict[str, str]:
+    """Returns {pdf_url: content_hash} for currently still_current rows in
+    table_name, or {} if the table doesn't exist yet (first run)."""
+    exists = con.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = ?", [table_name]
+    ).fetchone()
+    if exists is None:
+        return {}
+    return dict(
+        con.execute(
+            f'SELECT pdf_url, content_hash FROM "{table_name}" WHERE still_current'
+        ).fetchall()
+    )
+
+
+def pdf_diff(
+    downloads: list[PdfDownload], db_path: Path, table_name: str
+) -> dict[str, int]:
+    """Read-only comparison of freshly downloaded PDFs' content hashes
+    against table_name's currently still_current rows - used for the
+    --dry-run summary and alongside a real merge. Downloads that failed or
+    were rejected as non-PDF never became a PdfDownload, so they aren't
+    counted here; callers add a separate `failed` count from the download
+    step's own failure dict."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(db_path)) as con:
+        previously_current = _existing_pdf_hashes(con, table_name)
+    new = unchanged = content_changed = 0
+    for d in downloads:
+        prev_hash = previously_current.get(d.pdf_url)
+        if prev_hash is None:
+            new += 1
+        elif prev_hash == d.content_hash:
+            unchanged += 1
+        else:
+            content_changed += 1
+    return {"new": new, "unchanged": unchanged, "content_changed": content_changed}
+
+
+def merge_pdf_snapshots(
+    downloads: list[PdfDownload], db_path: Path, table_name: str
+) -> None:
+    """Type 2 merge of freshly downloaded PDF content snapshots into
+    table_name, at (pdf_url, content_hash) grain: bumps last_seen on a
+    still_current row whose hash matches what was just downloaded (content
+    unchanged), closes a still_current row whose url was re-downloaded with
+    a *different* hash (content changed - never for a url simply absent
+    this run, since a download failure says nothing about what's still
+    being served), and inserts a new row for any (pdf_url, content_hash)
+    with no matching still_current row - covering brand-new urls, content
+    changes (old row just closed above), and a hash reappearing after being
+    superseded."""
+    if not downloads:
+        return
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with duckdb.connect(str(db_path)) as con:
+        con.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS "{table_name}" (
+                pdf_url VARCHAR,
+                content_hash VARCHAR,
+                storage_path VARCHAR,
+                content_type VARCHAR,
+                content_length BIGINT,
+                first_seen TIMESTAMP,
+                last_seen TIMESTAMP,
+                still_current BOOLEAN
+            )
+            """
+        )
+        con.execute(
+            """
+            CREATE OR REPLACE TEMP TABLE _found_pdf_snapshots AS
+            SELECT
+                UNNEST(?) AS pdf_url,
+                UNNEST(?) AS content_hash,
+                UNNEST(?) AS storage_path,
+                UNNEST(?) AS content_type,
+                UNNEST(?) AS content_length
+            """,
+            [
+                [d.pdf_url for d in downloads],
+                [d.content_hash for d in downloads],
+                [str(d.storage_path) if d.storage_path else None for d in downloads],
+                [d.content_type for d in downloads],
+                [d.content_length for d in downloads],
+            ],
+        )
+
+        con.execute(
+            f"""
+            UPDATE "{table_name}"
+            SET last_seen = ?
+            WHERE still_current
+              AND (pdf_url, content_hash) IN (SELECT pdf_url, content_hash FROM _found_pdf_snapshots)
+            """,
+            [now],
+        )
+
+        con.execute(
+            f"""
+            UPDATE "{table_name}"
+            SET still_current = false
+            WHERE still_current
+              AND pdf_url IN (SELECT pdf_url FROM _found_pdf_snapshots)
+              AND (pdf_url, content_hash) NOT IN (SELECT pdf_url, content_hash FROM _found_pdf_snapshots)
+            """
+        )
+
+        con.execute(
+            f"""
+            INSERT INTO "{table_name}"
+                (pdf_url, content_hash, storage_path, content_type, content_length, first_seen, last_seen, still_current)
+            SELECT pdf_url, content_hash, storage_path, content_type, content_length, ?, ?, true
+            FROM _found_pdf_snapshots f
+            WHERE (f.pdf_url, f.content_hash) NOT IN (
+                SELECT pdf_url, content_hash FROM "{table_name}" WHERE still_current
+            )
             """,
             [now, now],
         )

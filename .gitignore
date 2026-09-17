@@ -222,3 +222,4 @@ __marimo__/
 # Extracted data
 data/processed/
 data/doorstop.duckdb
+data/raw_pdfs/
