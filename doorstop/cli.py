@@ -1,6 +1,7 @@
 """Entry points for the doorstop pipelines.
 
 python -m doorstop extract [input_dir]
+python -m doorstop extract --from-downloads
 python -m doorstop discover-ministerial-diaries
 python -m doorstop download-ministerial-diaries
 """
@@ -21,6 +22,7 @@ from doorstop.load import (
     merge_ministerial_diaries,
     merge_pdf_snapshots,
     pdf_diff,
+    still_current_pdf_paths,
     still_listed_diary_urls,
     write_csv,
 )
@@ -38,26 +40,56 @@ app = typer.Typer()
 @app.command()
 def extract(
     input_dir: Path = typer.Argument(
-        DEFAULT_INPUT_DIR, help="Directory of diary PDFs to extract."
+        DEFAULT_INPUT_DIR,
+        help="Directory of diary PDFs to extract. Ignored if --from-downloads is set.",
+    ),
+    from_downloads: bool = typer.Option(
+        False,
+        "--from-downloads",
+        help="Source PDFs from still-current rows of ref_diary_pdf_snapshots instead of input_dir.",
     ),
     csv_path: Path = typer.Option(CSV_PATH, help="Where to write the raw entries CSV."),
-    db_path: Path = typer.Option(DB_PATH, help="DuckDB database to load the CSV into."),
+    db_path: Path = typer.Option(
+        DB_PATH,
+        help="DuckDB database to load the CSV into (and, with --from-downloads, read PDF paths from).",
+    ),
 ) -> None:
-    """Extract every diary PDF in a directory into a CSV and a DuckDB table."""
-    pdf_paths = sorted(input_dir.glob("*.pdf"))
-    if not pdf_paths:
-        raise SystemExit(f"no PDFs found in {input_dir}")
+    """Extract every diary PDF in a directory (or, with --from-downloads, every
+    still-current downloaded PDF) into a CSV and a DuckDB table."""
+    if from_downloads:
+        pdf_paths = still_current_pdf_paths(db_path, table_name=PDF_SNAPSHOTS_TABLE_NAME)
+        if not pdf_paths:
+            raise SystemExit(
+                f"no still-current downloaded PDFs in {db_path} ({PDF_SNAPSHOTS_TABLE_NAME}) "
+                "- run download-ministerial-diaries first"
+            )
+    else:
+        pdf_paths = sorted(input_dir.glob("*.pdf"))
+        if not pdf_paths:
+            raise SystemExit(f"no PDFs found in {input_dir}")
 
     entries = []
+    failed: dict[str, str] = {}
     for pdf_path in pdf_paths:
-        pdf_entries = extract_pdf(pdf_path)
+        try:
+            pdf_entries = extract_pdf(pdf_path)
+        except Exception as exc:
+            failed[str(pdf_path)] = str(exc)
+            continue
         print(f"{pdf_path.name}: {len(pdf_entries)} entries")
         entries.extend(pdf_entries)
+
+    if failed:
+        print(f"warning: failed to extract {len(failed)} PDF(s), skipped: {failed}")
+
+    if not entries:
+        raise SystemExit(f"no entries extracted from any of {len(pdf_paths)} PDF(s)")
 
     write_csv(entries, csv_path)
     load_duckdb(csv_path, db_path)
     print(
-        f"\n{len(entries)} total entries -> {csv_path} and {db_path} ({RAW_TABLE_NAME})"
+        f"\n{len(entries)} total entries from {len(pdf_paths) - len(failed)}/{len(pdf_paths)} "
+        f"PDFs -> {csv_path} and {db_path} ({RAW_TABLE_NAME})"
     )
 
 

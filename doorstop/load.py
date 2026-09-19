@@ -19,6 +19,12 @@ of tracking whether a URL is still listed, it tracks whether a URL's served
 content has ever changed, keyed on (pdf_url, content_hash) rather than just
 pdf_url - a URL with more than one row has, by construction, served different
 bytes at different times.
+
+`still_current_pdf_paths` mirrors `still_listed_diary_urls` one stage further
+down the pipeline, reading storage_path back out for extract's optional
+--from-downloads input, deduplicated on storage_path because two different
+pdf_urls have, at least once, served byte-identical content - extracting the
+same file twice would double-count its entries.
 """
 
 from __future__ import annotations
@@ -173,6 +179,28 @@ def still_listed_diary_urls(db_path: Path, table_name: str) -> list[str]:
             f'SELECT pdf_url FROM "{table_name}" WHERE still_listed'
         ).fetchall()
     return [row[0] for row in rows]
+
+
+def still_current_pdf_paths(db_path: Path, table_name: str) -> list[Path]:
+    """Reads DISTINCT storage_path for every still_current row in table_name,
+    ordered for a deterministic run order - the optional input source for the
+    extract stage (--from-downloads) taken from the persisted
+    ref_diary_pdf_snapshots table rather than a directory listing. DISTINCT is
+    required, not cosmetic: two different pdf_urls have, at least once, served
+    byte-identical content, so selecting storage_path per-row instead of
+    per-distinct-file would parse the same PDF twice and double-count its
+    entries in raw_diary_entries."""
+    with duckdb.connect(str(db_path)) as con:
+        exists = con.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = ?", [table_name]
+        ).fetchone()
+        if exists is None:
+            return []
+        rows = con.execute(
+            f'SELECT DISTINCT storage_path FROM "{table_name}" '
+            "WHERE still_current ORDER BY storage_path"
+        ).fetchall()
+    return [Path(row[0]) for row in rows]
 
 
 def _existing_pdf_hashes(
